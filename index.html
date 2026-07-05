@@ -32,21 +32,20 @@
 
   <section class="card" id="step2">
     <h2><span class="step-badge">2</span>AIによる物品リスト作成</h2>
-    <p class="hint">上記のテキストをAI（Claude）に読み込ませ、購入する物品リスト（品名・型番・数量）を自動作成します。ご自身のAnthropic APIキーが必要です。APIキーはこのブラウザ内（localStorage）にのみ保存され、Anthropic API（api.anthropic.com）へ直接送信されます。サーバーには保存されません。</p>
+    <p class="hint">上記のテキストをAIに読み込ませ、購入する物品リスト（品名・型番・数量）を自動作成します。AIはこのブラウザの中だけで動作します（WebLLM）。APIキーやアカウント登録は不要・完全無料で、仕様書の内容が外部に送信されることもありません。ただし初回はモデルデータのダウンロード（数百MB〜数GB）が必要で、対応ブラウザ（Google Chrome / Microsoft Edgeの最新版など、WebGPU対応ブラウザ）が必要です。</p>
     <div class="field-row">
       <div class="field">
-        <label for="apiKeyInput">Anthropic APIキー</label>
-        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
-      </div>
-      <div class="field">
-        <label for="modelInput">モデルID</label>
-        <input type="text" id="modelInput" placeholder="例: claude-sonnet-4-5-20250929">
-        <p class="hint">Anthropicのドキュメントで最新のモデルIDをご確認の上、必要に応じて変更してください。</p>
+        <label for="modelSelect">AIモデル</label>
+        <select id="modelSelect" disabled>
+          <option value="">読み込み中...</option>
+        </select>
+        <p class="hint">モデルが小さいほどダウンロードが速く動作も軽い代わりに、抽出精度は下がります。</p>
       </div>
     </div>
     <div class="btn-row">
-      <button id="aiExtractBtn" type="button">AIで物品リストを抽出</button>
+      <button id="aiExtractBtn" type="button" disabled>AIで物品リストを抽出</button>
     </div>
+    <p class="hint">ブラウザ内蔵AIはテキストの長さに制限があるため、仕様書のテキストは先頭8,000文字までを解析します。長い仕様書は該当箇所だけを抽出してAIにかけることをおすすめします。</p>
     <div id="aiStatus" class="status-msg"></div>
   </section>
 
