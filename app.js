@@ -6,8 +6,7 @@
   const state = {
     files: [],
     items: [],
-    apiKey: '',
-    model: 'claude-sonnet-4-5-20250929',
+    model: '',
     extractedText: '',
     form: {
       docTitle: '見積書',
@@ -35,8 +34,7 @@
   const extractStatus = el('extractStatus');
   const extractedTextArea = el('extractedText');
 
-  const apiKeyInput = el('apiKeyInput');
-  const modelInput = el('modelInput');
+  const modelSelect = el('modelSelect');
   const aiExtractBtn = el('aiExtractBtn');
   const aiStatus = el('aiStatus');
 
@@ -78,7 +76,6 @@
   function saveState() {
     const toSave = {
       items: state.items,
-      apiKey: state.apiKey,
       model: state.model,
       extractedText: state.extractedText,
       form: state.form
@@ -95,7 +92,6 @@
         state.items = parsed.items;
         nextItemId = state.items.reduce((max, it) => Math.max(max, it.id + 1), 1);
       }
-      if (typeof parsed.apiKey === 'string') state.apiKey = parsed.apiKey;
       if (typeof parsed.model === 'string' && parsed.model) state.model = parsed.model;
       if (typeof parsed.extractedText === 'string') state.extractedText = parsed.extractedText;
       if (parsed.form) Object.assign(state.form, parsed.form);
@@ -213,17 +209,84 @@
     saveState();
   });
 
-  // ---- Step 2: AI item extraction ----
+  // ---- Step 2: AI item extraction (runs fully in-browser via WebLLM, no API key) ----
 
-  apiKeyInput.addEventListener('input', () => {
-    state.apiKey = apiKeyInput.value;
+  const WEBLLM_CDN_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm';
+  const PREFERRED_MODEL_SUBSTRINGS = [
+    'Qwen2.5-1.5B-Instruct',
+    'Qwen2.5-3B-Instruct',
+    'Llama-3.2-3B-Instruct',
+    'Phi-3.5-mini-instruct',
+    'gemma-2-2b-it',
+    'Qwen2.5-7B-Instruct',
+    'Llama-3.1-8B-Instruct'
+  ];
+
+  let webllmModule = null;
+  let engine = null;
+  let loadedModelId = null;
+
+  modelSelect.addEventListener('change', () => {
+    state.model = modelSelect.value;
     saveState();
   });
 
-  modelInput.addEventListener('input', () => {
-    state.model = modelInput.value.trim() || state.model;
-    saveState();
-  });
+  function populateModelSelect(modelList) {
+    const chatModels = modelList.filter((m) => !/embed/i.test(m.model_id));
+    chatModels.sort((a, b) => {
+      const rank = (m) => {
+        const idx = PREFERRED_MODEL_SUBSTRINGS.findIndex((s) => m.model_id.includes(s));
+        return idx === -1 ? PREFERRED_MODEL_SUBSTRINGS.length : idx;
+      };
+      return rank(a) - rank(b) || a.model_id.localeCompare(b.model_id);
+    });
+    modelSelect.innerHTML = '';
+    chatModels.forEach((m) => {
+      const option = document.createElement('option');
+      option.value = m.model_id;
+      option.textContent = m.model_id;
+      modelSelect.appendChild(option);
+    });
+    const preferredMatch = chatModels.find((m) => m.model_id === state.model);
+    if (preferredMatch) {
+      modelSelect.value = state.model;
+    } else if (chatModels.length > 0) {
+      modelSelect.value = chatModels[0].model_id;
+      state.model = modelSelect.value;
+    }
+    modelSelect.disabled = false;
+    aiExtractBtn.disabled = false;
+  }
+
+  async function ensureWebLLMLoaded() {
+    if (webllmModule) return webllmModule;
+    webllmModule = await import(WEBLLM_CDN_URL);
+    return webllmModule;
+  }
+
+  if (!navigator.gpu) {
+    setStatus(
+      aiStatus,
+      'このブラウザはWebGPUに対応していないため、ブラウザ内蔵AIを利用できません。Google ChromeまたはMicrosoft Edgeの最新版でお試しください。',
+      'error'
+    );
+    modelSelect.innerHTML = '<option value="">利用不可</option>';
+  } else {
+    ensureWebLLMLoaded()
+      .then((mod) => populateModelSelect(mod.prebuiltAppConfig.model_list))
+      .catch((e) => {
+        setStatus(aiStatus, `AIライブラリの読み込みに失敗しました: ${e.message}`, 'error');
+        modelSelect.innerHTML = '<option value="">読み込み失敗</option>';
+      });
+  }
+
+  async function ensureEngineForModel(modelId, onProgress) {
+    if (engine && loadedModelId === modelId) return engine;
+    const mod = await ensureWebLLMLoaded();
+    engine = await mod.CreateMLCEngine(modelId, { initProgressCallback: onProgress });
+    loadedModelId = modelId;
+    return engine;
+  }
 
   function buildExtractionPrompt(specText) {
     return `あなたは入札案件の仕様書を読み取り、購入すべき物品を抽出する専門家です。
@@ -254,29 +317,21 @@ ${specText}
     return parsed;
   }
 
-  async function callClaudeAPI(prompt) {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': state.apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: state.model,
-        max_tokens: 8192,
-        messages: [{ role: 'user', content: prompt }]
-      })
+  async function runLocalLLM(prompt) {
+    const modelId = modelSelect.value;
+    if (!modelId) throw new Error('AIモデルを選択してください。');
+    const activeEngine = await ensureEngineForModel(modelId, (report) => {
+      const pct = Math.round((report.progress || 0) * 100);
+      setStatus(aiStatus, report.text ? report.text : `モデルを読み込んでいます... ${pct}%`, 'loading');
     });
-    if (!response.ok) {
-      const bodyText = await response.text().catch(() => '');
-      throw new Error(`APIエラー (${response.status}): ${bodyText.slice(0, 300)}`);
-    }
-    const data = await response.json();
-    const textPart = (data.content || []).find((c) => c.type === 'text');
-    if (!textPart) throw new Error('AIの応答にテキストが含まれていませんでした。');
-    return textPart.text;
+    setStatus(aiStatus, 'AIが仕様書を解析しています...', 'loading');
+    const reply = await activeEngine.chat.completions.create({
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4096
+    });
+    const text = reply.choices && reply.choices[0] && reply.choices[0].message && reply.choices[0].message.content;
+    if (!text) throw new Error('AIの応答にテキストが含まれていませんでした。');
+    return text;
   }
 
   aiExtractBtn.addEventListener('click', async () => {
@@ -285,18 +340,14 @@ ${specText}
       setStatus(aiStatus, '先に仕様書のテキストを抽出または貼り付けてください。', 'error');
       return;
     }
-    if (!state.apiKey) {
-      setStatus(aiStatus, 'Anthropic APIキーを入力してください。', 'error');
-      return;
-    }
-    const MAX_CHARS = 300000;
+    const MAX_CHARS = 8000;
     const truncated = specText.length > MAX_CHARS;
     const textForPrompt = truncated ? specText.slice(0, MAX_CHARS) : specText;
 
     aiExtractBtn.disabled = true;
-    setStatus(aiStatus, 'AIが仕様書を解析しています...', 'loading');
+    setStatus(aiStatus, 'AIモデルを準備しています（初回はダウンロードに時間がかかります）...', 'loading');
     try {
-      const responseText = await callClaudeAPI(buildExtractionPrompt(textForPrompt));
+      const responseText = await runLocalLLM(buildExtractionPrompt(textForPrompt));
       const parsedItems = parseItemsFromAIText(responseText);
       const newItems = parsedItems.map((it) => ({
         id: nextItemId++,
@@ -534,8 +585,6 @@ ${f.companyPerson ? '担当: ' + escapeHtml(f.companyPerson) : ''}</div>
   function init() {
     loadState();
     renderFileList();
-    apiKeyInput.value = state.apiKey;
-    modelInput.value = state.model;
     extractedTextArea.value = state.extractedText;
     renderItemsTable();
     quoteDateInput.value = state.form.quoteDate || new Date().toISOString().slice(0, 10);
