@@ -1,10 +1,154 @@
 <!DOCTYPE html>
-<html>
-<head><!-- 裏設定エリアの開始 -->
-    <meta charset="utf-8"><!-- 文字化け防止 -->
-</head><!-- 裏設定エリアの終了 -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>入札見積書作成アプリ</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>入札見積書作成アプリ</h1>
+  <p class="lead">入札関係書類をアップロード → AIが仕様書から物品リストを作成 → 単価を入力 → 見積書を発行します。</p>
+</header>
 
-<body><!-- 画面に表示されるエリアの開始 -->
-    Hello World！
-</body><!-- 画面に表示されるエリアの終了 -->
+<main>
+
+  <section class="card" id="step1">
+    <h2><span class="step-badge">1</span>入札関係書類のアップロード</h2>
+    <p class="hint">仕様書などのファイル（PDF / Word(.docx) / Excel(.xlsx, .xls) / テキスト(.txt, .csv)）をアップロードしてください。複数選択できます。</p>
+    <input type="file" id="fileInput" multiple accept=".pdf,.docx,.xlsx,.xls,.txt,.csv">
+    <ul id="fileList"></ul>
+    <div class="btn-row">
+      <button id="extractTextBtn" type="button">ファイルからテキストを抽出</button>
+    </div>
+    <div id="extractStatus" class="status-msg"></div>
+
+    <div class="field" style="margin-top:14px;">
+      <label for="extractedText">抽出されたテキスト（内容を確認・編集できます）</label>
+      <textarea id="extractedText" rows="8" placeholder="ここに仕様書のテキストが表示されます。直接貼り付け・編集も可能です。"></textarea>
+    </div>
+  </section>
+
+  <section class="card" id="step2">
+    <h2><span class="step-badge">2</span>AIによる物品リスト作成</h2>
+    <p class="hint">上記のテキストをAI（Claude）に読み込ませ、購入する物品リスト（品名・型番・数量）を自動作成します。ご自身のAnthropic APIキーが必要です。APIキーはこのブラウザ内（localStorage）にのみ保存され、Anthropic API（api.anthropic.com）へ直接送信されます。サーバーには保存されません。</p>
+    <div class="field-row">
+      <div class="field">
+        <label for="apiKeyInput">Anthropic APIキー</label>
+        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
+      </div>
+      <div class="field">
+        <label for="modelInput">モデルID</label>
+        <input type="text" id="modelInput" placeholder="例: claude-sonnet-4-5-20250929">
+        <p class="hint">Anthropicのドキュメントで最新のモデルIDをご確認の上、必要に応じて変更してください。</p>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button id="aiExtractBtn" type="button">AIで物品リストを抽出</button>
+    </div>
+    <div id="aiStatus" class="status-msg"></div>
+  </section>
+
+  <section class="card" id="step3">
+    <h2><span class="step-badge">3</span>物品リスト・単価入力</h2>
+    <p class="hint">品名・型番・数量はAIの抽出結果から編集できます。各行の単価を入力すると金額が自動計算されます。</p>
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>品名</th>
+          <th>型番</th>
+          <th class="num">数量</th>
+          <th>単位</th>
+          <th class="num">単価（円）</th>
+          <th class="num">金額（円）</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="itemsTableBody"></tbody>
+    </table>
+    <div class="btn-row">
+      <button id="addItemBtn" type="button" class="secondary">行を追加</button>
+      <button id="exportCsvBtn" type="button" class="secondary">CSVダウンロード</button>
+    </div>
+    <div class="totals">
+      <div>小計: <span id="subtotalDisplay">0</span> 円</div>
+      <div>消費税(<span id="taxRateDisplay">10</span>%): <span id="taxDisplay">0</span> 円</div>
+      <div class="grand">合計: <span id="grandTotalDisplay">0</span> 円</div>
+    </div>
+  </section>
+
+  <section class="card" id="step4">
+    <h2><span class="step-badge">4</span>見積書の作成</h2>
+    <div class="field-row">
+      <div class="field">
+        <label for="docTitleInput">書類タイトル</label>
+        <input type="text" id="docTitleInput" value="見積書">
+      </div>
+      <div class="field">
+        <label for="quoteNumberInput">見積番号</label>
+        <input type="text" id="quoteNumberInput" placeholder="例: 2026-001">
+      </div>
+      <div class="field">
+        <label for="quoteDateInput">発行日</label>
+        <input type="date" id="quoteDateInput">
+      </div>
+      <div class="field">
+        <label for="validUntilInput">見積有効期限</label>
+        <input type="date" id="validUntilInput">
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="clientNameInput">宛先（発注者名）</label>
+        <input type="text" id="clientNameInput" placeholder="例: 〇〇市役所">
+      </div>
+      <div class="field">
+        <label for="projectTitleInput">件名（案件名）</label>
+        <input type="text" id="projectTitleInput" placeholder="例: 〇〇機器一式購入業務">
+      </div>
+      <div class="field">
+        <label for="taxRateInput">消費税率（%）</label>
+        <input type="number" id="taxRateInput" value="10" min="0" max="100" step="0.1">
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="companyNameInput">発行者（自社名）</label>
+        <input type="text" id="companyNameInput" placeholder="例: 株式会社〇〇">
+      </div>
+      <div class="field">
+        <label for="companyPersonInput">担当者</label>
+        <input type="text" id="companyPersonInput" placeholder="例: 営業部 山田太郎">
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="companyAddressInput">住所・連絡先</label>
+        <textarea id="companyAddressInput" rows="2" placeholder="例: 〒000-0000 東京都..."></textarea>
+      </div>
+      <div class="field">
+        <label for="notesInput">備考</label>
+        <textarea id="notesInput" rows="2" placeholder="例: 納期、支払条件など"></textarea>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button id="generateQuoteBtn" type="button">見積書を作成</button>
+      <button id="printQuoteBtn" type="button" class="secondary">印刷 / PDF保存</button>
+      <button id="resetAllBtn" type="button" class="danger">全てリセット</button>
+    </div>
+
+    <div id="quotePreview"></div>
+  </section>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
 </html>
